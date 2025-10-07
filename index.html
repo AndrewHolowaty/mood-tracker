@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,8 +8,8 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 body { font-family: Arial, sans-serif; background: #f8f8f8; margin:0; padding:20px; }
-h1,h2 { text-align:center; color:#333; }
-form, #calendar, #dashboard, #dbInterface { max-width:700px; margin:20px auto; background:#fff; padding:20px; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.1); }
+h1,h2 { text-align:center; color:#333; text-decoration: underline; }
+form, #calendar, #dashboard, #dbInterface, #adminPortal { max-width:700px; margin:20px auto; background:#fff; padding:20px; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.1); }
 label { display:block; margin-top:15px; font-weight:bold; }
 textarea, input[type="text"], input[type="date"], select { width:100%; padding:10px; margin-top:5px; border-radius:5px; border:1px solid #ccc; resize:vertical; }
 button { margin-top:10px; margin-right:10px; padding:10px 20px; border:none; border-radius:5px; background:#4CAF50; color:white; font-size:16px; cursor:pointer; }
@@ -19,21 +20,31 @@ button:hover { background:#45a049; }
 table { width:100%; border-collapse: collapse; margin-top:10px; }
 table, th, td { border:1px solid #ccc; }
 th, td { padding:8px; text-align:left; }
-.mood-happy { background-color: #ffeb3b; }
-.mood-neutral { background-color: #90caf9; }
-.mood-sad { background-color: #f48fb1; }
+.mood-Happy { background-color: #ffeb3b; }
+.mood-Neutral { background-color: #90caf9; }
+.mood-Sad { background-color: #f48fb1; }
 #status { text-align:center; font-style:italic; color:#555; margin-top:10px; }
+#adminPortal { display:none; background:#ffeeee; border:1px solid red; padding:10px; }
+.stat { cursor:pointer; text-decoration:underline; color:blue; margin-right:10px; position:relative; }
+.stat:hover::after, .calendarEntry:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  background: rgba(0,0,0,0.8);
+  color: white;
+  padding: 5px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+  top: -30px;
+  left: 0;
+  font-size: 12px;
+  z-index: 100;
+}
+.calendarEntry { cursor:pointer; }
 </style>
 </head>
 <body>
 
-<style>
-  h1 {
-    text-decoration: underline;
-  }
-</style>
-  
-  <h1>Daily Mood Tracker</h1>
+<h1>Daily Mood Tracker</h1>
 <div id="status"></div>
 
 <form id="dailyForm">
@@ -67,7 +78,6 @@ th, td { padding:8px; text-align:left; }
     <button type="button" onclick="loadEntry()">Load Entry</button>
     <button type="button" onclick="exportEntries()">Export Entries</button>
     <button type="button" onclick="importEntries()">Import Entries</button>
-    <button type="button" onclick="resetDatabase()">Reset Local DB</button>
     <button type="button" onclick="resetFilter()">Reset Filter</button>
   </div>
 </form>
@@ -78,6 +88,9 @@ th, td { padding:8px; text-align:left; }
 
 <div id="dashboard">
   <h2>Dashboard</h2>
+  <span class="stat" data-tooltip="Click to filter Happy moods" data-mood="Happy">Happy</span>
+  <span class="stat" data-tooltip="Click to filter Neutral moods" data-mood="Neutral">Neutral</span>
+  <span class="stat" data-tooltip="Click to filter Sad moods" data-mood="Sad">Sad</span>
   <canvas id="moodChart" height="100" onclick="handleMoodChartClick(event)"></canvas>
   <canvas id="wordChart" height="100" onclick="handleWordChartClick(event)"></canvas>
 </div>
@@ -97,19 +110,25 @@ th, td { padding:8px; text-align:left; }
   </table>
 </div>
 
+<div id="adminPortal">
+  <h2>Admin Debug Portal</h2>
+  <button id="adminResetDB">Reset Local DB</button>
+  <button id="adminExportDB">Export DB (Debug)</button>
+  <button id="logAllEntries">Console Log All Entries</button>
+</div>
+
 <script>
 let db;
-const request = indexedDB.open("DailyJournalDB",1);
+const request = indexedDB.open("DailyMoodDB",1);
 let currentFilter = null;
 
-request.onupgradeneeded = function(event){
-  db=event.target.result;
+request.onupgradeneeded = e=>{
+  db=e.target.result;
   const store=db.createObjectStore("entries",{keyPath:"date"});
   store.createIndex("date","date",{unique:true});
 };
-
-request.onsuccess = function(event){ db=event.target.result; refreshAll(); };
-request.onerror = function(event){ console.error("IndexedDB error:", event.target.errorCode); };
+request.onsuccess=e=>{ db=e.target.result; refreshAll(); };
+request.onerror=e=>console.error("IndexedDB error:", e.target.errorCode);
 
 const statusDiv = document.getElementById('status');
 
@@ -125,17 +144,16 @@ function saveEntry(){
     sharing: document.getElementById('sharing').value,
     mood: document.getElementById('mood').value
   };
-  const transaction=db.transaction(["entries"],"readwrite");
-  transaction.objectStore("entries").put(entry);
-  transaction.oncomplete=()=>{ statusDiv.textContent="Entry saved!"; refreshAll(); };
-  transaction.onerror=(e)=>{ statusDiv.textContent="Save failed"; console.error(e); };
+  db.transaction(["entries"],"readwrite").objectStore("entries").put(entry).onsuccess=()=>{
+    statusDiv.textContent="Entry saved!";
+    refreshAll();
+  };
 }
 
 function loadEntry(){
   const date=document.getElementById('date').value;
   if(!date){ statusDiv.textContent="Please select a date."; return; }
-  const transaction=db.transaction(["entries"],"readonly");
-  transaction.objectStore("entries").get(date).onsuccess=(evt)=>{
+  db.transaction(["entries"],"readonly").objectStore("entries").get(date).onsuccess=evt=>{
     const e=evt.target.result;
     if(e){
       document.getElementById('fragment').value=e.fragment;
@@ -152,27 +170,26 @@ function loadEntry(){
 function resetFilter(){ currentFilter=null; document.getElementById('searchInput').value=''; refreshAll(); }
 
 function exportEntries(){
-  db.transaction(["entries"],"readonly").objectStore("entries").getAll().onsuccess=(evt)=>{
+  db.transaction(["entries"],"readonly").objectStore("entries").getAll().onsuccess=evt=>{
     const blob=new Blob([JSON.stringify(evt.target.result,null,2)],{type:"application/json"});
     const url=URL.createObjectURL(blob);
-    const a=document.createElement("a");
-    a.href=url; a.download="journal_entries.json"; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    const a=document.createElement("a"); a.href=url; a.download="journal_entries.json"; a.click(); URL.revokeObjectURL(url);
   };
 }
 
 function importEntries(){
   const input=document.createElement("input");
   input.type="file"; input.accept=".json";
-  input.onchange=(e)=>{
+  input.onchange=e=>{
     const file=e.target.files[0]; if(!file) return;
     const reader=new FileReader();
-    reader.onload=(evt)=>{
+    reader.onload=evt=>{
       try{
         const entries=JSON.parse(evt.target.result);
-        const transaction=db.transaction(["entries"],"readwrite");
-        const store=transaction.objectStore("entries");
+        const tx=db.transaction(["entries"],"readwrite");
+        const store=tx.objectStore("entries");
         entries.forEach(entry=>store.put(entry));
-        transaction.oncomplete=()=>{ statusDiv.textContent="Entries imported!"; refreshAll(); };
+        tx.oncomplete=()=>{ statusDiv.textContent="Entries imported!"; refreshAll(); };
       }catch(err){ statusDiv.textContent="Invalid JSON"; console.error(err); }
     };
     reader.readAsText(file);
@@ -180,34 +197,42 @@ function importEntries(){
   input.click();
 }
 
-function resetDatabase(){
-  if(!confirm("This will delete all entries. Are you sure?")) return;
-  const transaction=db.transaction(["entries"],"readwrite");
-  transaction.objectStore("entries").clear();
-  transaction.oncomplete=()=>{ statusDiv.textContent="All entries deleted"; refreshAll(); };
-}
-
+// ---- Calendar and DB Display ----
 function displayCalendar(entries=null){
-  const transaction=db.transaction(["entries"],"readonly");
-  const store=transaction.objectStore("entries");
-  store.getAll().onsuccess=(evt)=>{
+  const store=db.transaction(["entries"],"readonly").objectStore("entries");
+  store.getAll().onsuccess=evt=>{
     let listEntries = entries || evt.target.result;
     const list=document.getElementById('entryList'); list.innerHTML="";
     listEntries.sort((a,b)=>new Date(b.date)-new Date(a.date)).forEach(e=>{
       const li=document.createElement('li');
       li.textContent=`${e.date}: ${e.fragment.substring(0,30)}${e.fragment.length>30?'...':''}`;
+      li.className='calendarEntry';
+      li.setAttribute('data-tooltip', e.fragment.substring(0,50) + (e.fragment.length>50?'...':''));
       li.onclick=()=>{ document.getElementById('date').value=e.date; loadEntry(); };
       list.appendChild(li);
     });
   };
 }
 
-function filterEntries(){
-  const f=document.getElementById('searchInput').value.toLowerCase();
-  currentFilter = (entry)=>JSON.stringify(entry).toLowerCase().includes(f);
-  refreshAll();
+function displayDBInterface(entries){
+  entries = entries || [];
+  const tbody=document.querySelector("#dbTable tbody"); tbody.innerHTML="";
+  entries.sort((a,b)=>new Date(b.date)-new Date(a.date)).forEach(e=>{
+    const tr=document.createElement('tr'); tr.className=`mood-${e.mood}`;
+    tr.innerHTML=`<td>${e.date}</td><td>${e.mood}</td><td>${e.fragment.substring(0,30)}${e.fragment.length>30?'...':''}</td>
+    <td>
+      <button onclick="editEntry('${e.date}')">Edit</button>
+      <button onclick="deleteEntry('${e.date}')">Delete</button>
+    </td>`;
+    tbody.appendChild(tr);
+  });
 }
 
+function editEntry(date){ document.getElementById('date').value=date; loadEntry(); }
+function deleteEntry(date){ if(!confirm("Delete this entry?")) return; db.transaction(["entries"],"readwrite").objectStore("entries").delete(date).onsuccess=refreshAll; }
+function filterEntries(){ const f=document.getElementById('searchInput').value.toLowerCase(); currentFilter=e=>JSON.stringify(e).toLowerCase().includes(f); refreshAll(); }
+
+// ---- Dashboard ----
 let moodChart, wordChart;
 function updateDashboard(entries){
   entries = entries || [];
@@ -219,73 +244,47 @@ function updateDashboard(entries){
       wordCounts[sec]+=(e[sec]?.split(/\s+/).filter(Boolean).length||0);
     });
   });
-  // Mood chart
   const ctxM=document.getElementById('moodChart').getContext('2d');
   if(moodChart) moodChart.destroy();
-  moodChart=new Chart(ctxM,{
-    type:'bar',
-    data:{labels:Object.keys(moodCounts), datasets:[{label:'Mood Count', data:Object.values(moodCounts), backgroundColor:['#ffeb3b','#90caf9','#f48fb1']}]},
-    options:{responsive:true, plugins:{tooltip:{enabled:true}}}
-  });
-  // Word chart
+  moodChart=new Chart(ctxM,{type:'bar',data:{labels:Object.keys(moodCounts), datasets:[{label:'Mood Count', data:Object.values(moodCounts), backgroundColor:['#ffeb3b','#90caf9','#f48fb1']}]}, options:{responsive:true, plugins:{tooltip:{enabled:true}}}});
   const ctxW=document.getElementById('wordChart').getContext('2d');
   if(wordChart) wordChart.destroy();
-  wordChart=new Chart(ctxW,{
-    type:'bar',
-    data:{labels:Object.keys(wordCounts), datasets:[{label:'Word Count', data:Object.values(wordCounts), backgroundColor:'#4caf50'}]},
-    options:{responsive:true, plugins:{tooltip:{enabled:true}}}
-  });
+  wordChart=new Chart(ctxW,{type:'bar', data:{labels:Object.keys(wordCounts), datasets:[{label:'Word Count', data:Object.values(wordCounts), backgroundColor:'#4caf50'}]}, options:{responsive:true, plugins:{tooltip:{enabled:true}}}});
 }
 
 function handleMoodChartClick(evt){
   if(!moodChart) return;
   const points = moodChart.getElementsAtEventForMode(evt,'nearest',{intersect:true},true);
-  if(points.length){
-    const label = moodChart.data.labels[points[0].index];
-    currentFilter = (entry)=>entry.mood===label;
-    refreshAll();
-  }
+  if(points.length){ const label=moodChart.data.labels[points[0].index]; currentFilter=e=>e.mood===label; refreshAll(); }
 }
-
 function handleWordChartClick(evt){
   if(!wordChart) return;
-  const points = wordChart.getElementsAtEventForMode(evt,'nearest',{intersect:true},true);
-  if(points.length){
-    const section = wordChart.data.labels[points[0].index];
-    currentFilter = (entry)=>entry[section]?.trim();
-    refreshAll();
-  }
+  const points=wordChart.getElementsAtEventForMode(evt,'nearest',{intersect:true},true);
+  if(points.length){ const section=wordChart.data.labels[points[0].index]; currentFilter=e=>e[section]?.trim(); refreshAll(); }
 }
 
-function displayDBInterface(entries){
-  entries = entries || [];
-  const tbody=document.querySelector("#dbTable tbody"); tbody.innerHTML="";
-  entries.sort((a,b)=>new Date(b.date)-new Date(a.date)).forEach(e=>{
-    const tr=document.createElement('tr'); tr.className=`mood-${e.mood.toLowerCase()}`;
-    tr.innerHTML=`<td>${e.date}</td><td>${e.mood}</td><td>${e.fragment.substring(0,30)}${e.fragment.length>30?'...':''}</td>
-    <td>
-      <button onclick="editEntry('${e.date}')">Edit</button>
-      <button onclick="deleteEntry('${e.date}')">Delete</button>
-    </td>`;
-    tbody.appendChild(tr);
-  });
-}
-
-function editEntry(date){ document.getElementById('date').value=date; loadEntry(); }
-function deleteEntry(date){
-  if(!confirm("Delete this entry?")) return;
-  db.transaction(["entries"],"readwrite").objectStore("entries").delete(date).onsuccess=()=>{ statusDiv.textContent="Entry deleted"; refreshAll(); };
-}
-
+// ---- Refresh All ----
 function refreshAll(){
-  db.transaction(["entries"],"readonly").objectStore("entries").getAll().onsuccess=(evt)=>{
-    let entries = evt.target.result;
-    if(currentFilter) entries = entries.filter(currentFilter);
-    displayCalendar(entries);
-    updateDashboard(entries);
-    displayDBInterface(entries);
+  db.transaction(["entries"],"readonly").objectStore("entries").getAll().onsuccess=evt=>{
+    let entries=evt.target.result;
+    if(currentFilter) entries=entries.filter(currentFilter);
+    displayCalendar(entries); updateDashboard(entries); displayDBInterface(entries);
   };
 }
+
+// ---- Admin Portal ----
+let adminSequence = [];
+const konami=['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
+document.addEventListener('keydown', e=>{
+  adminSequence.push(e.key);
+  if(adminSequence.slice(-konami.length).join(',')===konami.join(',')){
+    document.getElementById("adminPortal").style.display="block";
+    statusDiv.textContent="Admin portal enabled!";
+  }
+});
+document.getElementById("adminResetDB").addEventListener("click", ()=>{ if(confirm("Force reset DB?")) db.transaction(["entries"],"readwrite").objectStore("entries").clear().onsuccess=refreshAll; });
+document.getElementById("adminExportDB").addEventListener("click", exportEntries);
+document.getElementById("logAllEntries").addEventListener("click", ()=>db.transaction(["entries"],"readonly").objectStore("entries").getAll().onsuccess=evt=>console.log(evt.target.result));
 </script>
 </body>
 </html>
