@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -115,6 +114,7 @@ th, td { padding:8px; text-align:left; }
   <button id="adminResetDB">Reset Local DB</button>
   <button id="adminExportDB">Export DB (Debug)</button>
   <button id="logAllEntries">Console Log All Entries</button>
+  <button id="adminHidePortal">Hide Admin Portal</button>
 </div>
 
 <script>
@@ -282,9 +282,18 @@ document.addEventListener('keydown', e=>{
     statusDiv.textContent="Admin portal enabled!";
   }
 });
-document.getElementById("adminResetDB").addEventListener("click", ()=>{ if(confirm("Force reset DB?")) db.transaction(["entries"],"readwrite").objectStore("entries").clear().onsuccess=refreshAll; });
+
+document.getElementById("adminResetDB").addEventListener("click", ()=>{
+  if(confirm("Force reset DB?")) db.transaction(["entries"],"readwrite").objectStore("entries").clear().onsuccess=refreshAll;
+});
 document.getElementById("adminExportDB").addEventListener("click", exportEntries);
-document.getElementById("logAllEntries").addEventListener("click", ()=>db.transaction(["entries"],"readonly").objectStore("entries").getAll().onsuccess=evt=>console.log(evt.target.result));
+document.getElementById("logAllEntries").addEventListener("click", ()=>{
+  db.transaction(["entries"],"readonly").objectStore("entries").getAll().onsuccess=evt=>console.log(evt.target.result);
+});
+document.getElementById("adminHidePortal").addEventListener("click", ()=>{
+  document.getElementById("adminPortal").style.display="none";
+  statusDiv.textContent="";
+});
 </script>
 </body>
 </html>
