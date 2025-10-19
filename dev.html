@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daily Mood Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+/* --- General Page Styling --- */
+body { font-family: Arial, sans-serif; background: #f8f8f8; margin:0; padding:20px; }
+h1,h2 { text-align:center; color:#333; text-decoration: underline; }
+
+/* --- Form and Container Styling --- */
+form, #calendar, #dashboard, #dbInterface, #adminPortal {
+    max-width:700px; margin:20px auto; background:#fff; padding:20px;
+    border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.1);
+}
+label { display:block; margin-top:15px; font-weight:bold; }
+textarea, input[type="text"], input[type="date"], select {
+    width:100%; padding:10px; margin-top:5px; border-radius:5px; border:1px solid #ccc; resize:vertical;
+}
+
+/* --- Buttons --- */
+button {
+    margin-top:10px; margin-right:10px; padding:10px 20px; border:none;
+    border-radius:5px; background:#4CAF50; color:white; font-size:16px; cursor:pointer;
+}
+button:hover { background:#45a049; }
+
+/* --- Lists --- */
+#calendar ul, #dashboard ul, #dbTable { list-style:none; padding:0; }
+#calendar li, #dashboard li { padding:5px 0; border-bottom:1px solid #eee; cursor:pointer; }
+#calendar li:hover, #dashboard li:hover { background-color:#f0f0f0; }
+
+/* --- Table --- */
+table { width:100%; border-collapse: collapse; margin-top:10px; }
+table, th, td { border:1px solid #ccc; }
+th, td { padding:8px; text-align:left; }
+
+/* --- Mood Colors --- */
+.mood-Happy { background-color: #ffeb3b; }
+.mood-Neutral { background-color: #90caf9; }
+.mood-Sad { background-color: #f48fb1; }
+
+/* --- Status message --- */
+#status { text-align:center; font-style:italic; color:#555; margin-top:10px; }
+
+/* --- Admin portal --- */
+#adminPortal { display:none; background:#ffeeee; border:1px solid red; padding:10px; }
+
+/* --- Hover tooltips for stats and calendar entries --- */
+.stat, .calendarEntry { cursor:pointer; }
+.stat:hover::after, .calendarEntry:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  background: rgba(0,0,0,0.8);
+  color: white;
+  padding: 5px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+  top: -30px;
+  left: 0;
+  font-size: 12px;
+  z-index: 100;
+}
+</style>
+</head>
+<body>
+
+<!-- --- Header --- -->
+<h1>Daily Mood Tracker</h1>
+<div id="status"></div>
+
+<!-- --- Daily Entry Form --- -->
+<form id="dailyForm">
+  <label for="date">Date</label>
+  <input type="date" id="date">
+
+  <label for="fragment">Fragment Journaling</label>
+  <textarea id="fragment" rows="3"></textarea>
+
+  <label for="sensory">Sensory Awareness</label>
+  <textarea id="sensory" rows="3"></textarea>
+
+  <label for="somatic">Somatic Mapping</label>
+  <textarea id="somatic" rows="3"></textarea>
+
+  <label for="sound">Sound / Motion</label>
+  <textarea id="sound" rows="3"></textarea>
+
+  <label for="sharing">Optional Safe Sharing</label>
+  <textarea id="sharing" rows="3"></textarea>
+
+  <label for="mood">Mood</label>
+  <select id="mood">
+    <option value="Happy">Happy</option>
+    <option value="Neutral">Neutral</option>
+    <option value="Sad">Sad</option>
+  </select>
+
+  <div>
+    <button type="button" onclick="saveEntry()">Save Entry</button>
+    <button type="button" onclick="loadEntry()">Load Entry</button>
+    <button type="button" onclick="exportEntries()">Export Entries</button>
+    <button type="button" onclick="importEntries()">Import Entries</button>
+    <button type="button" onclick="resetFilter()">Reset Filter</button>
+  </div>
+</form>
+
+<!-- --- Search Box --- -->
+<div id="searchBox">
+  <input type="text" id="searchInput" placeholder="Search entries..." oninput="filterEntries()">
+</div>
+
+<!-- --- Dashboard --- -->
+<div id="dashboard">
+  <h2>Dashboard</h2>
+  <span class="stat" data-tooltip="Click to filter Happy moods" data-mood="Happy">Happy</span>
+  <span class="stat" data-tooltip="Click to filter Neutral moods" data-mood="Neutral">Neutral</span>
+  <span class="stat" data-tooltip="Click to filter Sad moods" data-mood="Sad">Sad</span>
+  <canvas id="moodChart" height="100" onclick="handleMoodChartClick(event)"></canvas>
+  <canvas id="wordChart" height="100" onclick="handleWordChartClick(event)"></canvas>
+</div>
+
+<!-- --- Calendar --- -->
+<div id="calendar">
+  <h2>Saved Entries</h2>
+  <ul id="entryList"></ul>
+</div>
+
+<!-- --- Database Table --- -->
+<div id="dbInterface">
+  <h2>Local DB Interface</h2>
+  <table id="dbTable">
+    <thead><tr>
+      <th>Date</th><th>Mood</th><th>Fragment</th><th>Actions</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<!-- --- Admin Portal --- -->
+<div id="adminPortal">
+  <h2>Admin Debug Portal</h2>
+  <button id="adminResetDB">Reset Local DB</button>
+  <button id="adminExportDB">Export DB (Debug)</button>
+  <button id="logAllEntries">Console Log All Entries</button>
+  <button id="adminHidePortal">Hide Admin Portal</button>
+</div>
+
+<script>
+/* --- Initialize IndexedDB --- */
+let db;
+const request = indexedDB.open("DailyMoodDB",1);
+let currentFilter = null;
+
+request.onupgradeneeded = e=>{
+  db=e.target.result;
+  const store=db.createObjectStore("entries",{keyPath:"date"});
+  store.createIndex("date","date",{unique:true});
+};
+request.onsuccess=e=>{ db=e.target.result; refreshAll(); };
+request.onerror=e=>console.error("IndexedDB error:", e.target.errorCode);
+
+const statusDiv = document.getElementById('status');
+
+/* --- Save Entry --- */
+function saveEntry(){
+  const date=document.getElementById('date').value;
+  if(!date){ statusDiv.textContent="Please select a date."; return; }
+  const entry={
+    date,
+    fragment: document.getElementById('fragment').value,
+    sensory: document.getElementById('sensory').value,
+    somatic: document.getElementById('somatic').value,
+    sound: document.getElementById('sound').value,
+    sharing: document.getElementById('sharing').value,
+    mood: document.getElementById('mood').value
+  };
+  db.transaction(["entries"],"readwrite").objectStore("entries").put(entry).onsuccess=()=>{
+    statusDiv.textContent="Entry saved!";
+    refreshAll();
+  };
+}
+
+/* --- Load Entry --- */
+function loadEntry(){
+  const date=document.getElementById('date').value;
+  if(!date){ statusDiv.textContent="Please select a date."; return; }
+  db.transaction(["entries"],"readonly").objectStore("entries").get(date).onsuccess=evt=>{
+    const e=evt.target.result;
+    if(e){
+      document.getElementById('fragment').value=e.fragment;
+      document.getElementById('sensory').value=e.sensory;
+      document.getElementById('somatic').value=e.somatic;
+      document.getElementById('sound').value=e.sound;
+      document.getElementById('sharing').value=e.sharing;
+      document.getElementById('mood').value=e.mood;
+      statusDiv.textContent="Entry loaded!";
+    } else statusDiv.textContent="No entry found";
+  };
+}
+
+/* --- Reset Filter --- */
+function resetFilter(){ currentFilter=null; document.getElementById('searchInput').value=''; refreshAll(); }
+
+/* --- Export / Import --- */
+function exportEntries(){
+  db.transaction(["entries"],"readonly").objectStore("entries").getAll().onsuccess=evt=>{
+    const blob=new Blob([JSON.stringify(evt.target.result,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a"); a.href=url; a.download="journal_entries.json"; a.click(); URL.revokeObjectURL(url);
+  };
+}
+function importEntries(){
+  const input=document.createElement("input");
+  input.type="file"; input.accept=".json";
+  input.onchange=e=>{
+    const file=e.target.files[0]; if(!file) return;
+    const reader=new FileReader();
+    reader.onload=evt=>{
+      try{
+        const entries=JSON.parse(evt.target.result);
+        const tx=db.transaction(["entries"],"readwrite");
+        const store=tx.objectStore("entries");
+        entries.forEach(entry=>store.put(entry));
+        tx.oncomplete=()=>{ statusDiv.textContent="Entries imported!"; refreshAll(); };
+      }catch(err){ statusDiv.textContent="Invalid JSON"; console.error(err); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+/* --- Calendar Display --- */
+function displayCalendar(entries=null){
+  const store=db.transaction(["entries"],"readonly").objectStore("entries");
+  store.getAll().onsuccess=evt=>{
+    let listEntries = entries || evt.target.result;
+    const list=document.getElementById('entryList'); list.innerHTML="";
+    listEntries.sort((a,b)=>new Date(b.date)-new Date(a.date)).forEach(e=>{
+      const li=document.createElement('li');
+      li.textContent=`${e.date}: ${e.fragment.substring(0,30)}${e.fragment.length>30?'...':''}`;
+      li.className='calendarEntry';
+      li.setAttribute('data-tooltip', e.fragment.substring(0,50) + (e.fragment.length>50?'...':''));
+      li.onclick=()=>{ document.getElementById('date').value=e.date; loadEntry(); };
+      list.appendChild(li);
+    });
+  };
+}
+
+/* --- DB Interface Table --- */
+function displayDBInterface(entries){
+  entries = entries || [];
+  const tbody=document.querySelector("#dbTable tbody"); tbody.innerHTML="";
+  entries.sort((a,b)=>new Date(b.date)-new Date(a.date)).forEach(e=>{
+    const tr=document.createElement('tr'); tr.className=`mood-${e.mood}`;
+    tr.innerHTML=`<td>${e.date}</td><td>${e.mood}</td><td>${e.fragment.substring(0,30)}${e.fragment.length>30?'...':''}</td>
+    <td>
+      <button onclick="editEntry('${e.date}')">Edit</button>
+      <button onclick="deleteEntry('${e.date}')">Delete</button>
+    </td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+/* --- Edit / Delete --- */
+function editEntry(date){ document.getElementById('date').value=date; loadEntry(); }
+function deleteEntry(date){ if(!confirm("Delete this entry?")) return; db.transaction(["entries"],"readwrite").objectStore("entries").delete(date).onsuccess=refreshAll; }
+
+/* --- Filter --- */
+function filterEntries(){ const f=document.getElementById('searchInput').value.toLowerCase(); currentFilter=e=>JSON.stringify(e).toLowerCase().includes(f); refreshAll(); }
+
+/* --- Dashboard Charts --- */
+let moodChart, wordChart;
+function updateDashboard(entries){
+  entries = entries || [];
+  const moodCounts={Happy:0,Neutral:0,Sad:0};
+  const wordCounts={fragment:0,sensory:0,somatic:0,sound:0,sharing:0};
+  entries.forEach(e=>{
+    moodCounts[e.mood]=(moodCounts[e.mood]||0)+1;
+    ['fragment','sensory','somatic','sound','sharing'].forEach(sec=>{
+      wordCounts[sec]+=(e[sec]?.split(/\s+/).filter(Boolean).length||0);
+    });
+  });
+  const ctxM=document.getElementById('moodChart').getContext('2d');
+  if(moodChart) moodChart.destroy();
+  moodChart=new Chart(ctxM,{type:'bar',data:{labels:Object.keys(moodCounts), datasets:[{label:'Mood Count', data:Object.values(moodCounts), backgroundColor:['#ffeb3b','#90caf9','#f48fb1']}]}, options:{responsive:true, plugins:{tooltip:{enabled:true}}}});
+  const ctxW=document.getElementById('wordChart').getContext('2d');
+  if(wordChart) wordChart.destroy();
+  wordChart=new Chart(ctxW,{type:'bar', data:{labels:Object.keys(wordCounts), datasets:[{label:'Word Count', data:Object.values(wordCounts), backgroundColor:'#4caf50'}]}, options:{responsive:true, plugins:{tooltip:{enabled:true}}}});
+}
+function handleMoodChartClick(evt){
+  if(!moodChart) return;
+  const points = moodChart.getElementsAtEventForMode(evt,'nearest',{intersect:true},true);
+  if(points.length){ const label=moodChart.data.labels[points[0].index]; currentFilter=e=>e.mood===label; refreshAll(); }
+}
+function handleWordChartClick(evt){
+  if(!wordChart) return;
+  const points=wordChart.getElementsAtEventForMode(evt,'nearest',{intersect:true},true);
+  if(points.length){ const section=wordChart.data.labels[points[0].index]; currentFilter=e=>e[section]?.trim(); refreshAll(); }
+}
+
+/* --- Refresh All Function --- */
+function refreshAll(){
+  db.transaction(["entries"],"readonly").objectStore("entries").getAll().onsuccess=evt=>{
+    let entries=evt.target.result;
+    if(currentFilter) entries=entries.filter(currentFilter);
+    displayCalendar(entries); updateDashboard(entries); displayDBInterface(entries);
+  };
+}
+
+/* --- Admin Portal Konami Sequence --- */
+let adminSequence = [];
+const konami=['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
+document.addEventListener('keydown', e=>{
+  adminSequence.push(e.key);
+  if(adminSequence.slice(-konami.length).join(',')===konami.join(',')){
+    document.getElementById("adminPortal").style.display="block";
+    statusDiv.textContent="Admin portal enabled!";
+  }
+});
+document.getElementById("adminResetDB").addEventListener("click", ()=>{
+  if(confirm("Force reset DB?")) db.transaction(["entries"],"readwrite").objectStore("entries").clear().onsuccess=refreshAll;
+});
+document.getElementById("adminExportDB").addEventListener("click", exportEntries);
+document.getElementById("logAllEntries").addEventListener("click", ()=>{
+  db.transaction(["entries"],"readonly").objectStore("entries").getAll().onsuccess=evt=>console.log(evt.target.result);
+});
+document.getElementById("adminHidePortal").addEventListener("click", ()=>{
+  document.getElementById("adminPortal").style.display="none";
+  statusDiv.textContent="";
+});
+</script>
+</body>
+</html>
